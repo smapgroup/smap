@@ -1,0 +1,22 @@
+function [T] = coaxInStepABCD(di1,di2,do,f)
+
+% function [T] = coaxInStepABCD(di1,di2,do,f)
+% Coaxial line inner conductor step ABCD matrix of size [2,2,Nf], where Nf is the number of
+% frequencies as reflected in the length of f.
+%
+% Inputs:
+% di1 - Inner diameter of port 1 in m
+% di2 - Inner diameter of port 2 in m
+% do - Outer diameter in m 
+% f - frequency in Hz
+
+
+
+
+Nf = length(f);
+wC = 2.*pi.*f.*C;
+T(1,1,:) = ones(Nf,1);
+T(1,2,:) = zeros(Nf,1);
+T(2,1,:) = 1i.*wC;
+T(2,2,:) = T(1,1,:);
+
