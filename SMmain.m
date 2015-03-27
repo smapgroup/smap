@@ -1,6 +1,6 @@
 function [Ri,Si,Pi] = SMmain(xinit,Sinit,SMopts,Mf,Mc,OPTopts)
 
-% Space Mapping main loop
+% Space Mapping main loop 
 
 % Inputs:
 % xinit:    Initial values of input parameters [Nn,1]
