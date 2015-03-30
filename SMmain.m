@@ -76,6 +76,7 @@ function [Ri,Si,Pi,Ci, Li] = SMmain(xinit,Sinit,SMopts,Mf,Mc,OPTopts)
 % 2015-03-14: Add MATLAB case to fine model evaluation function
 % 2015-03-27: Add costeq cost function
 %             Add plotIter functionality
+% 2015-03-30: Add FEKO functionality to the fine model function
 
 
 % Set defaults
@@ -157,6 +158,8 @@ while ii <= Ni && ~specF
         end
     else
         for rr = 1:Nr
+            % Get the surrogate response after previous iteration
+            % optimization - thus at current iteration position
             Rsi{ii}{rr}.r = evalSurr(xi{ii},Si{ii-1}{rr});
             Rsi{ii}{rr}.t = Rci{ii}{rr}.t;
             if isfield(Rci{ii}{rr},'f'), Rsi{ii}{rr}.f = Rci{ii}{rr}.f; end
@@ -302,7 +305,7 @@ function Rf = fineMod(M,xi)
 
 % Rf is a cell array of structures containing the response in Rf.r, the type Rf.t, and the
 % (optional) domain (typically frequency) in Rf.f.  Same length as M.Rtype
-% xi is an array of input paraeters - same order as those specified in M
+% xi is an array of input parameters - same order as those specified in M
 % M is a structure containing all the info to describe to model containing:
 %   path:   Full path to file
 %   name:   File name of file (without extension)
@@ -402,6 +405,38 @@ if strcmp(M.solver,'CST')
     end
     invoke(mws,'Save');
     invoke(mws,'Quit');
+elseif strcmp(M.solver,'FEKO')    % If solver is FEKO
+    % Build parameter string
+    parStr = [];
+    for nn = 1:Nn
+        parStr = [parStr,' -#',M.params{nn},'=',num2str(xi(nn))];
+    end
+    % Remesh the structure with the new parameters
+    FEKOmesh = ['cadfeko_batch ',[M.path,M.name,'.cfx'],parStr];
+    system(FEKOmesh)
+    % Run FEKO - cannot run with path, so change the directory
+    curDir = pwd;
+    cd(M.path)
+    FEKOrun = ['runfeko ', [M.name,'.cfx']];
+    system(FEKOrun)
+    cd(curDir)
+    % Generate output
+    for rr = 1:Nr
+        if strncmp(Rtype{rr},'S11',3)
+            % Read the S11 touchstone file - must be exported by the FEKO
+            % file with the correct name - Name_S11.s1p!
+            [Spar,freq] = touchread([M.path,M.name,'_S11.s1p'],1);
+            S11 = reshape(Spar(1,1,:),length(freq),1);
+            Rf{rr}.f = freq;
+        end
+        if strcmp(Rtype{rr},'S11dB')
+            Rf{rr}.r = dB20(S11);
+        elseif strcmp(Rtype{rr},'S11dB')
+            Rf{rr}.r = S11;
+        end
+        Rf{rr}.t = Rtype{rr};
+    end
+    
 elseif strcmp(M.solver,'MATLAB')    % If solver is MATLAB
     Ni = length(M.params);  % This is interpreted as the number of inputs to the function
     inType = [];
