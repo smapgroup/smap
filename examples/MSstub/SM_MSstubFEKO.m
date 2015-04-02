@@ -18,7 +18,7 @@ xpinit = [2.1]';   % Initial implicit parameters (only eps_r in this case)
 
 
 % Set up fine model
-Mf.path = 'c:\Work\GitHub\smap\examples\MSstub\FEKO\';
+Mf.path = 'C:\WorkSpace\Matlab\smap\examples\MSstub\FEKO\';
 Mf.name = 'MSstubOpen';
 Mf.solver = 'FEKO';
 Mf.params = {'ls'};
