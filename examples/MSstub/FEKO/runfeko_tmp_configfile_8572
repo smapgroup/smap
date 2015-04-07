@@ -1,0 +1,1 @@
+-localonly 2 -envall -mapall "C:\Program Files\FEKO\7.0\bin\feko_mkl.csv.impi.exe" "MSstubOpenCoarse" "--run-from-gui"
