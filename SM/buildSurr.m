@@ -111,6 +111,11 @@ function Si = buildSurr(xi,Rfi,S,opts)
 % 2015-03-11: Finish FSM
 % 2015-03-12: Constrained search added
 % 2015-03-13: Single value wk functionality added
+% 2015-03-14: Fix errW NaN issue, remove limits from parameters space-
+%             should be handled externally
+% 2015-04-04: Fix matrix size issue when getA == 1 and more than one
+%             iteration is required. A then becomes a scalar, and Nm was
+%             calculated as 1. Have to run coarse model every time.
 % ToDo: Impliment E (first order OSM)
 % ToDo: More optimizer options - just use fminsearch now
 % ToDo: Jacobian fitting in error functions (vk)
@@ -141,7 +146,7 @@ getE = 0;
 getF = 0;
 ximin = 0.8.*xi{Nc}; % Default constraints 
 ximax = xi{Nc}./0.8;
-if isfield(S,'xp')
+if isfield(S,'xp') && ~isempty(S.xp)
     xpmin(:,1) = 0.8.*S.xp; % Default constraints 
     xpmax(:,1) = S.xp./0.8;
     Nq = length(S.xp);
@@ -198,13 +203,13 @@ if isfield(opts,'optsPBIL'), optsPBIL = opts.optsPBIL; end
 if isfield(opts,'errNorm'), errNorm = opts.errNorm; end
 if isfield(opts,'errW'), errW = opts.errW; end
 
-% Limit the parameter space
-S.ximin = ximin;
-S.ximax = ximax;
-if isfield(S,'xp')
-    S.xpmin = xpmin;
-    S.xpmax = xpmax;
-end
+% % Limit the parameter space
+% S.ximin = ximin;
+% S.ximax = ximax;
+% if isfield(S,'xp')
+%     S.xpmin = xpmin;
+%     S.xpmax = xpmax;
+% end
 
 % Get vector sizes
 Nn = length(xi{Nc});
@@ -218,8 +223,11 @@ Si = S;
 if getA
     typeA = 'A';
     if isfield(S,'A')
-        A_init = S.A;   % Try to always initialize - avoid running coarse model for no real reason...
-        Nm = length(diag(A_init));
+        % Have to run the coarse model to find the response size
+        Rc = evalSurr(xi{Nc},S);
+        [Nm,Np] = size(Rc);
+        A_init = S.A;   
+%         Nm = length(diag(A_init));
         Av_init = diag(A_init);
         Amin = Av_init.*AlimMin;
         Amax = Av_init.*AlimMax;
@@ -306,6 +314,8 @@ if getF && isfield(S,'f')
     end
     Fmin = FminDef; % Take defaults directly
     Fmax = FmaxDef;
+elseif getF && ~isfield(S,'f')
+    error('If getF == 1 you have to supply a frequency vector in the SM model');
 end
     
 initVect = [Av_init;Bv_init;c_init;Gv_init;xp_init;F_init];
@@ -404,6 +414,7 @@ Nc = length(wk);
 ec = zeros(1,Nc);
 if length(opts.errW) == 1
     errW = Rfi{1}./Rfi{1};
+    errW(isnan(errW)) = 1;  % In case of 0 error...
 else
     errW = opts.errW;
 end
@@ -417,7 +428,7 @@ for cc = 1:Nc
     end
     ec(cc) = wk(cc).*sum(ev);    % This can be updated if more specific error functions are needed as function of response
 end
-e = sum(ec);
+e = sum(ec)./Nc;
 end
 
 
@@ -425,7 +436,6 @@ end
 % model is not re-evaluated - interpolation/extrapolation is used on the
 % provided coarse model response...
 function e = erriF(Fvect,Rfi,Rc,f,opts)
-
 fs = Fvect(1).*f + Fvect(2);
 Rs = interp1(f,Rc,fs,'spline');
 

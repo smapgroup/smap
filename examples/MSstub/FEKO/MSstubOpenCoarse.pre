@@ -6,7 +6,7 @@
 ** --- End CADFEKO checksum ignore
 
 ** Import mesh model
-IN   8 1055  "MSstubOpen.cfm"
+IN   8 1055  "MSstubOpenCoarse.cfm"
 
 
 ** FEKO solution parameters
@@ -20,7 +20,7 @@ PS: 0 : 0 : 3 : 1
 CG: -1 :  : -1
 
 ** Set medium properties, coatings and skin effects
-DI: Substrate : 0 : -1 :  :  : 2.1 :  :  :  : 0 : 1000
+DI: Substrate : 0 : -1 :  :  : 2.0982 :  :  :  : 0 : 1000
 DI: 0 :  : -1 :  :  : 1 :  :  :  : 0 : 1000
 
 ** Planar substrate
@@ -66,4 +66,4 @@ DA: 0
 ** End of file
 EN
 
-** CADFEKO Checksum: 47e30c1f8f476753648bf58a704a0b83
+** CADFEKO Checksum: 4a7a3fd8a979131932f7908196f29d3b

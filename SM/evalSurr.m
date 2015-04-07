@@ -37,10 +37,10 @@ function [Rs] = evalSurr(x,S)
 % xi:      Position of last update point of the model [Nn,1]
 % F:       Frequency space mapping parameters [2,1]
 % f:       Coarse model frequency range [Nm,1]
-% ximin:   vector of minimum values for xi to constrain the search space
-% ximax:   vector of maximum values for xi to constrain the search space
-% xpmin:   vector of minimum values for xp to constrain the search space
-% xpmax:   vector of maximum values for xp to constrain the search space
+% % ximin:   vector of minimum values for xi to constrain the search space
+% % ximax:   vector of maximum values for xi to constrain the search space
+% % xpmin:   vector of minimum values for xp to constrain the search space
+% % xpmax:   vector of maximum values for xp to constrain the search space
 
 
 % Date created: 2014-11-09
@@ -53,15 +53,16 @@ function [Rs] = evalSurr(x,S)
 %             Completely redefine the p-loop - simpler to understand now
 %             Include M in S.  Used in the general main SM loop.
 % 2015-03-12: Include limits on x and xp
+% 2015-03-14: Remove (comment) limits on x and xp - should be handled externally...
 
 % Get vector sizes 
 [Nn,Np] = size(x);
 
-% Default x limits
-xmin = ones(Nn,1).*-inf;
-xmax = ones(Nn,1).*inf;
-if isfield(S,'ximin'), xmin = S.ximin; end
-if isfield(S,'ximax'), xmax = S.ximax; end
+% % Default x limits
+% xmin = ones(Nn,1).*-inf;
+% xmax = ones(Nn,1).*inf;
+% if isfield(S,'ximin'), xmin = S.ximin; end
+% if isfield(S,'ximax'), xmax = S.ximax; end
 
 % Set up defaults for the input SM 
 if ~isfield(S,'B')
@@ -77,14 +78,14 @@ end
 
 % Check if any pre-assigned variables are provided and set up defaults for
 % ISM
-if isfield(S,'xp')
+if isfield(S,'xp') && ~isempty(S.xp) 
     xp = S.xp;
     [Nq,dummy] = size(xp);
-    % Default xp limits
-    xpcmin = ones(Nq,1).*-inf;
-    xpcmax = ones(Nq,1).*inf;
-    if isfield(S,'xpmin'), xpcmin = S.xpmin; end
-    if isfield(S,'xpmax'), xpcmax = S.xpmax; end
+%     % Default xp limits
+%     xpcmin = ones(Nq,1).*-inf;
+%     xpcmax = ones(Nq,1).*inf;
+%     if isfield(S,'xpmin'), xpcmin = S.xpmin; end
+%     if isfield(S,'xpmax'), xpcmax = S.xpmax; end
 
 else
     xpc = [];
@@ -109,13 +110,13 @@ end
 Rc = [];
 for pp = 1:Np
     xc = B*x(:,pp) + c;
-    xc = max(xc,xmin);
-    xc = min(xc,xmax);
+%     xc = max(xc,xmin);
+%     xc = min(xc,xmax);
     if isfield(S,'M')   % This will be the typical case - the else is left for legacy
         if Nq > 0
             xpc = G*x(:,pp) + xp;
-            xpc = max(xpc,xpcmin);
-            xpc = min(xpc,xpcmax);
+%             xpc = max(xpc,xpcmin);
+%             xpc = min(xpc,xpcmax);
         end
         RcStruct = S.coarse(S.M,xc,xpc,fc);
         Rc1 = RcStruct{1}.r;    % Assume this is returned from the SMmain.m function in the response structure format
@@ -166,6 +167,5 @@ if isfield(S,'xi')
 else    % This is just a dummy, since E will always be set to zero in this case...
     xi = x;
 end
-
 Rs = A*Rc + d + E*(x-xi);
     

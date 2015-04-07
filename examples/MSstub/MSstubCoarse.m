@@ -13,7 +13,7 @@ function R = MSstubCoarse(x,xp,f)
 % xp = [2.1];
 
 %% Scale inputs to be the same as FEKO
-f = f.*1;
+f = f.*1e0;
 
 %% Decode inputs
 ls = x(1);

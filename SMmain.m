@@ -22,14 +22,16 @@ function [Ri,Si,Pi,Ci, Li] = SMmain(xinit,Sinit,SMopts,Mf,Mc,OPTopts)
 %   params:     Cell array of paramater names - same order as xinit {Nn,1}
 %   ximin:  Vector of minimum values to limit the parameters [Nn,1]
 %   ximax:  Vector of maximum values to limit the parameters [Nn,1]
+%   Iparams:     Cell array of implicit paramater names - same order as xinit {Nn,1}
 %   xpmin:  Vector of minimum values to limit the implicit parameters [Nq,1]
 %   xpmax:  Vector of maximum values to limit the implicit parameters [Nq,1]
 %   freq:       Array of simulation frequencies [Nm,1] (optional)
 % OPTopts:  Optimization options structure for external loop
 %   Rtype:      Type of response (cell array if more than one needed)
 %               Valid types (so far):
-%               'S11dB' 
+%               'S11dB'
 %               'S11complex'
+%               'Gen' - generic case for use with MATLAB models 
 %   Ni:         Maximum number of iterations
 %   globOpt:    Flag to run PBIL (1 for only first iteration, 2 for all iterations) (default 0)
 %   M_PBIL:     Vector of bits for the global search variables (see PBILreal.m)
@@ -65,7 +67,7 @@ function [Ri,Si,Pi,Ci, Li] = SMmain(xinit,Sinit,SMopts,Mf,Mc,OPTopts)
 
 % Date created: 2015-03-06
 % Dirk de Villiers and Ryno Beyers
-% Last Modified: 2015-03-27
+% Last Modified: 2015-04-04
 % Updates:
 % 2015-03-06: Write function shell and basic functionality
 % 2015-03-09: Continue with shell and basic functionality
@@ -77,6 +79,7 @@ function [Ri,Si,Pi,Ci, Li] = SMmain(xinit,Sinit,SMopts,Mf,Mc,OPTopts)
 % 2015-03-27: Add costeq cost function
 %             Add plotIter functionality
 % 2015-03-30: Add FEKO functionality to the fine model function
+% 2015-04-04: Add FEKO functionality in the coarse model function
 
 
 % Set defaults
@@ -104,6 +107,8 @@ xi{1} = reshape(xinit,Nn,1);
 if isfield(Sinit,'xp')
     Nq = length(Sinit.xp);
     xpi{1} = reshape(Sinit.xp,Nq,1);
+else
+    Sinit.xp = [];
 end
 Nr = length(OPTopts.Rtype); % Number of responses requested
 Mc.Rtype = OPTopts.Rtype;
@@ -309,7 +314,7 @@ function Rf = fineMod(M,xi)
 % M is a structure containing all the info to describe to model containing:
 %   path:   Full path to file
 %   name:   File name of file (without extension)
-%   solver:     'CST'/'MATLAB' (for now)
+%   solver:     'CST'/'MATLAB'/'FEKO' (for now)
 %   params:     Cell array of paramater names - same order as xinit {Nn,1}
 %   ximin:  Vector of minimum values to limit the parameters [Nn,1]
 %   ximax:  Vector of maximum values to limit the parameters [Nn,1]
@@ -445,7 +450,7 @@ elseif strcmp(M.solver,'MATLAB')    % If solver is MATLAB
     end
     switch inType
         case 'xf'
-            Rfi = M.name(xi,f);
+            Rfi = M.name(xi,M.freq);
         otherwise
             Rfi = M.name(xi);
     end
@@ -472,7 +477,7 @@ function Rc = coarseMod(M,xi,xp,f)
 % M is a structure containing all the info to describe to model containing:
 %   path:   Full path to file
 %   name:   File name of file (without extension)
-%   solver:     'CST'/'MATLAB' (for now)
+%   solver:     'CST'/'FEKO'/'MATLAB' (for now)
 %   params:     Cell array of paramater names - same order as xinit {Nn,1}
 %   ximin:  Vector of minimum values to limit the parameters [Nn,1]
 %   ximax:  Vector of maximum values to limit the parameters [Nn,1]
@@ -481,7 +486,9 @@ function Rc = coarseMod(M,xi,xp,f)
 %   freq:       Array of simulation frequencies [Nm,1] (optional)
 %   Rtype:      Type of response (cell array if more than one needed)
 %               Valid types:
-%               'S11dB' - obvious!
+%               'S11dB'
+%               'S11complex'
+%               'Gen'
 
 % Limit the inputs
 if isfield(M,'ximin')
@@ -502,6 +509,7 @@ if isfield(M,'xpmax')
 end
 
 Nn = length(xi);
+Nq = length(xp);
 % Get number of responses requested
 if length(M.Rtype) == 1 && ~iscell(M.Rtype)
     Rtype = {M.Rtype};  % Special case - make a cell
@@ -511,8 +519,44 @@ end
 Nr = length(Rtype);
 Rc = cell(1,Nr);
 
-% If solver is MATLAB:
-if strcmp(M.solver,'MATLAB')
+% Check which solver is used to evaluate the model
+if strcmp(M.solver,'FEKO')    % If solver is FEKO
+    % Build parameter string
+    parStr = [];
+    for nn = 1:Nn
+        parStr = [parStr,' -#',M.params{nn},'=',num2str(xi(nn))];
+    end
+    % Also include possible implicit parameters
+    for qq = 1:Nq
+        parStr = [parStr,' -#',M.Iparams{qq},'=',num2str(xp(qq))];
+    end
+
+    % Remesh the structure with the new parameters
+    FEKOmesh = ['cadfeko_batch ',[M.path,M.name,'.cfx'],parStr];
+    system(FEKOmesh)
+    % Run FEKO - cannot run with path, so change the directory
+    curDir = pwd;
+    cd(M.path)
+    FEKOrun = ['runfeko ', [M.name,'.cfx']];
+    system(FEKOrun)
+    cd(curDir)
+    % Generate output
+    for rr = 1:Nr
+        if strncmp(Rtype{rr},'S11',3)
+            % Read the S11 touchstone file - must be exported by the FEKO
+            % file with the correct name - Name_S11.s1p!
+            [Spar,freq] = touchread([M.path,M.name,'_S11.s1p'],1);
+            S11 = reshape(Spar(1,1,:),length(freq),1);
+            Rc{rr}.f = freq;
+        end
+        if strcmp(Rtype{rr},'S11dB')
+            Rc{rr}.r = dB20(S11);
+        elseif strcmp(Rtype{rr},'S11complex')
+            Rc{rr}.r = S11;
+        end
+        Rc{rr}.t = Rtype{rr};
+    end
+elseif strcmp(M.solver,'MATLAB')
     Ni = length(M.params);  % This is interpreted as the number of inputs to the function
     inType = [];
     for ii = 1:Ni
@@ -579,12 +623,14 @@ function cost = costFunc(R,GOALS)
 %   goalResType:Cell array of response names to consider for the different goals {1,Ng}
 %               Valid types:
 %               'S11dB'
+%               'S11complex'
+%               'Gen'
 %   goalType:   Cell array of goal types {1,Ng}
 %               Valid types:
 %                   'lt' (Less than)
-%                   'gt' (Greater than) 
+%                   'gt' (Greater than)
 %                   'eq' (equal to) - todo
-%                   'minimax' 
+%                   'minimax'
 %   goalVal:    Cell array of goal values {1,Ng} - same order as goalType
 %   goalWeight: Vector of goal weights [1,Ng] (default equal weights)
 %   goalStart:  Cell array of start of valid goal domain {1,Ng} (optional)
@@ -593,10 +639,6 @@ function cost = costFunc(R,GOALS)
 %               Valid types:
 %                   'L1' (L1 norm - default)
 %                   'L2' (L2 norm)
-% Todo:
-%     - More goalType functions:
-%     'gt', 'eq', 'minimax', etc...
-
 
 % Make R a cell array if only one structure is passed.
 if length(R) == 1 && ~iscell(R), R = {R}; end
@@ -607,7 +649,7 @@ Ng = length(GOALS.goalType);
 
 for gg = 1:Ng
     goalType = GOALS.goalType{gg};
-    G.goalVal = GOALS.goalVal{gg};
+    if isfield(GOALS,'goalVal'),G.goalVal = GOALS.goalVal{gg}; end
     if isfield(GOALS,'goalStart'), G.goalStart = GOALS.goalStart{gg}; end
     if isfield(GOALS,'goalStop'), G.goalStop = GOALS.goalStop{gg}; end
     G.errNorm = 'L1';
