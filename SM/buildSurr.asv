@@ -188,14 +188,8 @@ if isfield(opts,'getxp'), getxp = opts.getxp; end
 if isfield(opts,'getd'), getd = opts.getd; end
 if isfield(opts,'getE'), getE = opts.getE; end
 if isfield(opts,'getF'), getF = opts.getF; end
-if isfield(opts,'ximin')
-    ximin = opts.ximin;
-    optsParE.ximin = ximin;
-end
-if isfield(opts,'ximax')
-    ximax = opts.ximax; 
-    optsParE.ximax = ximax;
-end
+if isfield(opts,'ximin'), ximin = opts.ximin; end
+if isfield(opts,'ximax'), ximax = opts.ximax; end
 if isfield(opts,'xpmin'), xpmin = opts.xpmin; end
 if isfield(opts,'xpmax'), xpmax = opts.xpmax; end
 if isfield(opts,'AlimMin'), AlimMin = opts.AlimMin; end
@@ -412,12 +406,12 @@ F = reshape(optVect(1+opts.lenA+opts.lenB+opts.lenc+opts.lenG+opts.lenxp:opts.le
 if isfield(opts,'ximin')
     ximin = opts.ximin;
 else
-    ximin = -inf*ones(size(xi{1}));
+    ximin = -inf;
 end
 if isfield(opts,'ximax')
     ximax = opts.ximax;
 else 
-    ximax = inf*ones(size(xi{1}));
+    ximax = inf*ones(length;
 end
 if opts.lenA > 0, S.A = A; end
 if opts.lenB > 0

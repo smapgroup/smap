@@ -88,6 +88,7 @@ if isfield(S,'xp') && ~isempty(S.xp)
 %     if isfield(S,'xpmax'), xpcmax = S.xpmax; end
 
 else
+    xp = [];
     xpc = [];
     Nq = 0;
 end
