@@ -86,7 +86,7 @@ function Si = buildSurr(xi,Rfi,S,opts)
 %
 % Date created: 2014-11-09
 % Dirk de Villiers
-% Last Modified: 2015-03-12
+% Last Modified: 2015-05-07
 % Updates:
 % 2014-11-09: Write function shell and basic functionality
 % 2014-11-10: Fix constraints of input SM (case 1), cases 2 - 5
@@ -116,8 +116,9 @@ function Si = buildSurr(xi,Rfi,S,opts)
 % 2015-04-04: Fix matrix size issue when getA == 1 and more than one
 %             iteration is required. A then becomes a scalar, and Nm was
 %             calculated as 1. Have to run coarse model every time.
+% 2015-05-07: Limit xi and xp in the error function (based on Alex
+%             Vermeulen's code)
 % ToDo: Impliment E (first order OSM)
-% ToDo: More optimizer options - just use fminsearch now
 % ToDo: Jacobian fitting in error functions (vk)
 
 % Preassign some variables
@@ -188,10 +189,22 @@ if isfield(opts,'getxp'), getxp = opts.getxp; end
 if isfield(opts,'getd'), getd = opts.getd; end
 if isfield(opts,'getE'), getE = opts.getE; end
 if isfield(opts,'getF'), getF = opts.getF; end
-if isfield(opts,'ximin'), ximin = opts.ximin; end
-if isfield(opts,'ximax'), ximax = opts.ximax; end
-if isfield(opts,'xpmin'), xpmin = opts.xpmin; end
-if isfield(opts,'xpmax'), xpmax = opts.xpmax; end
+if isfield(opts,'ximin')
+    ximin = opts.ximin;
+    optsParE.ximin = ximin;
+end
+if isfield(opts,'ximax')
+    ximax = opts.ximax; 
+    optsParE.ximax = ximax;
+end
+if isfield(opts,'xpmin')
+    xpmin = opts.xpmin; 
+    optsParE.xpmin = xpmin;
+end
+if isfield(opts,'xpmax')
+    xpmax = opts.xpmax; 
+    optsParE.xpmax = xpmax;
+end
 if isfield(opts,'AlimMin'), AlimMin = opts.AlimMin; end
 if isfield(opts,'AlimMax'), AlimMax = opts.AlimMax; end
 if isfield(opts,'Fmin'), FminDef = opts.Fmin; end
@@ -403,10 +416,54 @@ G = reshape(optVect(1+opts.lenA+opts.lenB+opts.lenc:opts.lenA+opts.lenB+opts.len
 xp = reshape(optVect(1+opts.lenA+opts.lenB+opts.lenc+opts.lenG:opts.lenA+opts.lenB+opts.lenc+opts.lenG+opts.lenxp),opts.lenxp,1);
 F = reshape(optVect(1+opts.lenA+opts.lenB+opts.lenc+opts.lenG+opts.lenxp:opts.lenA+opts.lenB+opts.lenc+opts.lenG+opts.lenxp+opts.lenF),opts.lenF,1);
 % Update surrogate model structure
+if isfield(opts,'ximin')
+    ximin = opts.ximin;
+else
+    ximin = -inf*ones(size(xi{1}));
+end
+if isfield(opts,'ximax')
+    ximax = opts.ximax;
+else 
+    ximax = inf*ones(size(xi{1}));
+end
+if isfield(S,'xp') && isfield(S,'xpmin') 
+    xpmin = S.xpmin;
+else
+    xpmin = -inf.*S.xpmin;
+end
+if isfield(S,'xp') && isfield(S,'xpmax') 
+    xpmax = S.xpmax;
+else
+    xpmax = -inf.*S.xpmax;
+end
+
 if opts.lenA > 0, S.A = A; end
-if opts.lenB > 0, S.B = B; end
-if opts.lenc > 0, S.c = c; end
-if opts.lenG > 0, S.G = G; end
+% c must be before B in the algebra...
+if opts.lenc > 0
+    S.c = c; 
+    ximin = ximin - c;
+    ximax = ximax - c;
+end
+if opts.lenB > 0
+    S.B = B;
+    dgB = diag(B);
+    Bsign = dgB >= 0;
+    for ss = 1:length(Bsign)
+        if Bsign(ss) >= 0
+            ximin(ss) = ximin(ss)/dgB(ss);
+            ximax(ss) = ximax(ss)/dgB(ss);
+        else
+            temp = ximin(ss)/dgB(ss);
+            ximin(ss) = ximax(ss)/dgB(ss);
+            ximax(ss) = temp;
+        end
+    end
+end
+if opts.lenG > 0 
+    S.G = G;
+else
+    G = zeros(opts.Nq,opts.Nn); 
+end
 if opts.lenxp > 0, S.xp = xp; end
 if opts.lenF > 0, S.F = F; end
 % Calculate the error function value
@@ -419,12 +476,20 @@ else
     errW = opts.errW;
 end
 for cc = 1:Nc
-    Rs = evalSurr(xi{cc},S);
-    diffR = errW.*(Rfi{cc} - Rs);
-    if isequal(opts.errNorm,'L1')
-        ev = sum(abs(diffR),2);  % Error vector [Nm,1]
-    elseif isequal(opts.errNorm,'L2')
-        ev = sum(abs(diffR).^2,2);  % Error vector [Nm,1]
+    xpmin = xpmin - G*xi{cc};
+    xpmax = xpmax - G*xi{cc};
+    if all(xi{cc} <= ximax) && all(xi{cc} >= ximin) && all(xp <= xpmax) && all(xp >= xpmin)
+        Rs = evalSurr(xi{cc},S);
+        diffR = errW.*(Rfi{cc} - Rs);
+        if isequal(opts.errNorm,'L1')
+            ev = sum(abs(diffR),2);  % Error vector [Nm,1]
+        elseif isequal(opts.errNorm,'L2')
+            ev = sum(abs(diffR).^2,2);  % Error vector [Nm,1]
+        end
+    else
+        ec = inf;
+%         keyboard;
+        break;
     end
     ec(cc) = wk(cc).*sum(ev);    % This can be updated if more specific error functions are needed as function of response
 end

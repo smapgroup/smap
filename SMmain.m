@@ -67,7 +67,7 @@ function [Ri,Si,Pi,Ci, Li] = SMmain(xinit,Sinit,SMopts,Mf,Mc,OPTopts)
 
 % Date created: 2015-03-06
 % Dirk de Villiers and Ryno Beyers
-% Last Modified: 2015-04-04
+% Last Modified: 2015-05-07
 % Updates:
 % 2015-03-06: Write function shell and basic functionality
 % 2015-03-09: Continue with shell and basic functionality
@@ -80,10 +80,11 @@ function [Ri,Si,Pi,Ci, Li] = SMmain(xinit,Sinit,SMopts,Mf,Mc,OPTopts)
 %             Add plotIter functionality
 % 2015-03-30: Add FEKO functionality to the fine model function
 % 2015-04-04: Add FEKO functionality in the coarse model function
+% 2015-05-07: Add limits for x/xp in the cost function
 
 
 % Set defaults
-Ni = 10;    % Maximum unmber of iterations
+Ni = 10;    % Maximum number of iterations
 globOpt = 0;
 M_PBIL = 8;
 globOptSM = 0;
@@ -600,14 +601,44 @@ if length(S) == 1 && ~iscell(S), S = {S}; end
 Nr = length(S); % Number of responses
 x = reshape(x,length(x),1);
 
-Rs = cell(1,Nr);
-for rr = 1:Nr
-    Rs{rr}.r = evalSurr(x,S{rr});
-    Rs{rr}.t = OPTopts.Rtype{rr};
-    if isfield(S{rr},'f'), Rs{rr}.f = S{rr}.f; end
+% Check for limits
+if isfield(S{1},'ximin')
+    ximin = S{1}.ximin;
+else
+    ximin = -inf.*x;
 end
-cost = costFunc(Rs,OPTopts);
+if isfield(S{1},'ximax')
+    ximax = S{1}.ximax;
+else 
+    ximax = inf.*x;
+end
+% Make dummy xp just for simple limit checking...
+if isfield(S{1},'xp') && isfield(S{1},'xpmin') 
+    xpmin = S{1}.xpmin;
+    xp = S{1}.xp;
+else
+    xpmin = -inf.*S{1}.xpmin;
+    xp = 0;
+end
+if isfield(S{1},'xp') && isfield(S{1},'xpmax') 
+    xpmax = S{1}.xpmax;
+    xp = S{1}.xp;
+else
+    xpmax = -inf.*S{1}.xpmax;
+    xp = 0;
+end
 
+if all(x <= ximax) && all(x >= ximin) && all(xp <= xpmax) && all(xp >= xpmin)
+    Rs = cell(1,Nr);
+    for rr = 1:Nr
+        Rs{rr}.r = evalSurr(x,S{rr});
+        Rs{rr}.t = OPTopts.Rtype{rr};
+        if isfield(S{rr},'f'), Rs{rr}.f = S{rr}.f; end
+    end
+    cost = costFunc(Rs,OPTopts);
+else
+    cost = inf;
+end
 % if cost == 0, keyboard; end
 
 end
