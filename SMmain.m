@@ -1,4 +1,4 @@
-function [Ri,Si,Pi,Ci, Li] = SMmain(xinit,Sinit,SMopts,Mf,Mc,OPTopts)
+function [Ri,Si,Pi,Ci,Li] = SMmain(xinit,Sinit,SMopts,Mf,Mc,OPTopts)
 
 % Space Mapping main loop
 
@@ -10,7 +10,7 @@ function [Ri,Si,Pi,Ci, Li] = SMmain(xinit,Sinit,SMopts,Mf,Mc,OPTopts)
 % Mf:       Fine model structure
 %   path:   Full path to file
 %   name:   File name of file (without extension)
-%   solver:     'CST'/'MATLAB' (for now)
+%   solver:     'CST'/'FEKO'/'MATLAB' (for now)
 %   params:     Cell array of paramater names - same order as xinit {Nn,1}
 %   ximin:  Vector of minimum values to limit the parameters [Nn,1]
 %   ximax:  Vector of maximum values to limit the parameters [Nn,1]
@@ -18,7 +18,7 @@ function [Ri,Si,Pi,Ci, Li] = SMmain(xinit,Sinit,SMopts,Mf,Mc,OPTopts)
 % Mc:       Coarse model structure (can be cell array of structures if more than one type has to be calculated to get all the fine model responses)
 %   path:   Full path to file
 %   name:   File name of file (without extension)
-%   solver:     'CST'/'MATLAB' (for now)
+%   solver:     'FEKO'/'MATLAB' (for now)
 %   params:     Cell array of paramater names - same order as xinit {Nn,1}
 %   ximin:  Vector of minimum values to limit the parameters [Nn,1]
 %   ximax:  Vector of maximum values to limit the parameters [Nn,1]
@@ -39,16 +39,20 @@ function [Ri,Si,Pi,Ci, Li] = SMmain(xinit,Sinit,SMopts,Mf,Mc,OPTopts)
 %   goalResType:Cell array of response names to consider for the different goals {1,Ng}
 %               Valid types:
 %               'S11dB'
+%               'S11complex'
+%               'Gen' - general            
 %   goalType:   Cell array of goal types {1,Ng}
 %               Valid types:
 %                   'lt' (Less than)
 %                   'gt' (Greater than)
-%                   'eq' - todo
-%                   'minimax' - todo
+%                   'eq' 
+%                   'minimax' 
+%                   'bw' (Like 'lt' but also maximizes bandwidth - requires goalCent value)
 %   goalVal:    Cell array of goal values {1,Ng} - same order as goalType
 %   goalWeight: Vector of goal weights [1,Ng]
 %   goalStart:  Cell array of start of valid goal domain {1,Ng}
 %   goalStop:   Cell array of stop of valid goal domain {1,Ng}
+%   goalCent:   Cell array of centre point of goal domain {1,Ng} (used by the 'bw' goalType) (optional)
 %   errNorm:    Cell array of type of error norms to use for optimization {1,Ng}
 %               Valid types:
 %                   'L1' (L1 norm - default)
@@ -67,7 +71,7 @@ function [Ri,Si,Pi,Ci, Li] = SMmain(xinit,Sinit,SMopts,Mf,Mc,OPTopts)
 
 % Date created: 2015-03-06
 % Dirk de Villiers and Ryno Beyers
-% Last Modified: 2015-05-07
+% Last Modified: 2015-06-26
 % Updates:
 % 2015-03-06: Write function shell and basic functionality
 % 2015-03-09: Continue with shell and basic functionality
@@ -81,7 +85,10 @@ function [Ri,Si,Pi,Ci, Li] = SMmain(xinit,Sinit,SMopts,Mf,Mc,OPTopts)
 % 2015-03-30: Add FEKO functionality to the fine model function
 % 2015-04-04: Add FEKO functionality in the coarse model function
 % 2015-05-07: Add limits for x/xp in the cost function
-
+% 2015-06-26: Update fineMod to rather switch between solvers
+%             Update coarseMod to rather switch between solvers 
+%             Removed costFunc and dependents from function to be used
+%             outside as well
 
 % Set defaults
 Ni = 10;    % Maximum number of iterations
@@ -187,7 +194,7 @@ while ii <= Ni && ~specF
     
     % Test fine model response
     costFi = costFunc(Rfi{ii},OPTopts);
-    if costFi == 0  % Exit is spec is reached (will typically not work for eq and never for minimax...)
+    if costFi == 0 && isempty(find(ismember(OPTopts.goalType,'bw'),1))   % Exit if spec is reached (will typically not work for eq and never for minimax, and bw is explicitly excluded)
         specF = 1;
     else
         specF = 0;
@@ -344,128 +351,135 @@ end
 Nr = length(Rtype);
 Rf = cell(1,Nr);
 
-% If solver is CST:
-if strcmp(M.solver,'CST')
-    % Start CST activeX
-    cst = actxserver('CSTSTUDIO.Application');
-    % Get handle to the model
-    mws = invoke(cst,'OpenFile',[M.path,M.name,'.cst']);
-    % Update parameters
-    for nn = 1:Nn
-        invoke(mws,'StoreParameter',M.params{nn},xi(nn));
-    end
-    invoke(mws,'Rebuild');
-    % Run simulation
-    solver = invoke(mws,'Solver');
-    invoke(solver,'Start');
+% Call the correct solver
+switch M.solver
     
-    % Generate output
-    for rr = 1:Nr
-        if strcmp(Rtype{rr},'S11dB')
-            result = invoke(mws,'Result1D','d1(1)1(1)');    % S11 in dB
-            % Get nr of frequency points in the plot
-            nRead = invoke(result,'GetN');
-            [fin,S11in] = deal(zeros(nRead,1));
-            for nn = 1:nRead
-                fin(nn) = invoke(result,'GetX',nn-1);        % Typically in GHz
-                S11in(nn) = invoke(result,'GetY',nn-1);
+    case 'CST'
+        % Start CST activeX
+        cst = actxserver('CSTSTUDIO.Application');
+        % Get handle to the model
+        mws = invoke(cst,'OpenFile',[M.path,M.name,'.cst']);
+        % Update parameters
+        for nn = 1:Nn
+            invoke(mws,'StoreParameter',M.params{nn},xi(nn));
+        end
+        invoke(mws,'Rebuild');
+        % Run simulation
+        solver = invoke(mws,'Solver');
+        invoke(solver,'Start');
+        
+        % Generate output
+        for rr = 1:Nr
+            if strcmp(Rtype{rr},'S11dB')
+                result = invoke(mws,'Result1D','d1(1)1(1)');    % S11 in dB
+                % Get nr of frequency points in the plot
+                nRead = invoke(result,'GetN');
+                [fin,S11in] = deal(zeros(nRead,1));
+                for nn = 1:nRead
+                    fin(nn) = invoke(result,'GetX',nn-1);        % Typically in GHz
+                    S11in(nn) = invoke(result,'GetY',nn-1);
+                end
+                if isfield(M,'freq')
+                    Nm = length(M.freq);
+                    Rf{rr}.r = reshape(interp1(fin,S11in,M.freq,'spline'),Nm,1);
+                    Rf{rr}.f = M.freq;
+                else
+                    Nm = nRead;
+                    Rf{rr}.r = S11in;
+                    Rf{rr}.f = fin;
+                end
+                Rf{rr}.t = Rtype{rr};
+                release(result);
+            elseif strcmp(Rtype{rr},'S11complex')
+                resultA = invoke(mws,'Result1D','a1(1)1(1)');    % amplitude of S11
+                resultP = invoke(mws,'Result1D','p1(1)1(1)');    % amplitude of S11
+                % Get nr of frequency points in the plots
+                nRead = invoke(resultA,'GetN');
+                [fin,S11in] = deal(zeros(nRead,1));
+                for nn = 1:nRead
+                    fin(nn) = invoke(resultA,'GetX',nn-1);        % Typically in GHz
+                    amp = invoke(resultA,'GetY',nn-1);
+                    phase = rad(invoke(resultP,'GetY',nn-1));
+                    S11in(nn) = amp.*exp(1i*phase);
+                end
+                if isfield(M,'freq')
+                    Nm = length(M.freq);
+                    Rreal = reshape(interp1(fin,real(S11in),M.freq,'spline'),Nm,1);
+                    Rimag = reshape(interp1(fin,imag(S11in),M.freq,'spline'),Nm,1);
+                    Rf{rr}.r = Rreal + 1i*Rimag;
+                    Rf{rr}.f = M.freq;
+                else
+                    Nm = nRead;
+                    Rf{rr}.r = S11in;
+                    Rf{rr}.f = fin;
+                end
+                Rf{rr}.t = Rtype{rr};
+                release(resultA);
+                release(resultP);
             end
-            if isfield(M,'freq')
-                Nm = length(M.freq);
-                Rf{rr}.r = reshape(interp1(fin,S11in,M.freq,'spline'),Nm,1);
-                Rf{rr}.f = M.freq;
-            else
-                Nm = nRead;
-                Rf{rr}.r = S11in;
-                Rf{rr}.f = fin;
+        end
+        invoke(mws,'Save');
+        invoke(mws,'Quit');
+        
+    case 'FEKO'
+        % Build parameter string
+        parStr = [];
+        for nn = 1:Nn
+            parStr = [parStr,' -#',M.params{nn},'=',num2str(xi(nn))];
+        end
+        % Remesh the structure with the new parameters
+        FEKOmesh = ['cadfeko_batch ',[M.path,M.name,'.cfx'],parStr];
+        system(FEKOmesh)
+        % Run FEKO - cannot run with path, so change the directory
+        curDir = pwd;
+        cd(M.path)
+        FEKOrun = ['runfeko ', [M.name,'.cfx']];
+        system(FEKOrun)
+        cd(curDir)
+        % Generate output
+        for rr = 1:Nr
+            if strncmp(Rtype{rr},'S11',3)
+                % Read the S11 touchstone file - must be exported by the FEKO
+                % file with the correct name - Name_S11.s1p!
+                [Spar,freq] = touchread([M.path,M.name,'_S11.s1p'],1);
+                S11 = reshape(Spar(1,1,:),length(freq),1);
+                Rf{rr}.f = freq;
+            end
+            if strcmp(Rtype{rr},'S11dB')
+                Rf{rr}.r = dB20(S11);
+            elseif strcmp(Rtype{rr},'S11complex')
+                Rf{rr}.r = S11;
             end
             Rf{rr}.t = Rtype{rr};
-            release(result);
-        elseif strcmp(Rtype{rr},'S11complex')
-            resultA = invoke(mws,'Result1D','a1(1)1(1)');    % amplitude of S11
-            resultP = invoke(mws,'Result1D','p1(1)1(1)');    % amplitude of S11
-            % Get nr of frequency points in the plots
-            nRead = invoke(resultA,'GetN');
-            [fin,S11in] = deal(zeros(nRead,1));
-            for nn = 1:nRead
-                fin(nn) = invoke(resultA,'GetX',nn-1);        % Typically in GHz
-                amp = invoke(resultA,'GetY',nn-1);
-                phase = rad(invoke(resultP,'GetY',nn-1));
-                S11in(nn) = amp.*exp(1i*phase);
-            end
-            if isfield(M,'freq')
-                Nm = length(M.freq);
-                Rreal = reshape(interp1(fin,real(S11in),M.freq,'spline'),Nm,1);
-                Rimag = reshape(interp1(fin,imag(S11in),M.freq,'spline'),Nm,1);
-                Rf{rr}.r = Rreal + 1i*Rimag;
-                Rf{rr}.f = M.freq;
-            else
-                Nm = nRead;
-                Rf{rr}.r = S11in;
-                Rf{rr}.f = fin;
-            end
+        end
+        
+    case 'MATLAB'
+        Ni = length(M.params);  % This is interpreted as the number of inputs to the function
+        inType = [];
+        for ii = 1:Ni
+            inType = [inType,M.params{ii}];   % Initialise
+        end
+        switch inType
+            case 'xf'
+                Rfi = M.name(xi,M.freq);
+            otherwise
+                Rfi = M.name(xi);
+        end
+        % Distribute the responses
+        % For MATLAB case the model should the return the specified responses
+        % columnwise...
+        for rr = 1:Nr
+            Rf{rr}.r = Rfi(:,rr);
             Rf{rr}.t = Rtype{rr};
-            release(resultA);
-            release(resultP);
+            if exist('f','var')
+                Rf{rr}.f = f;
+            end
         end
-    end
-    invoke(mws,'Save');
-    invoke(mws,'Quit');
-elseif strcmp(M.solver,'FEKO')    % If solver is FEKO
-    % Build parameter string
-    parStr = [];
-    for nn = 1:Nn
-        parStr = [parStr,' -#',M.params{nn},'=',num2str(xi(nn))];
-    end
-    % Remesh the structure with the new parameters
-    FEKOmesh = ['cadfeko_batch ',[M.path,M.name,'.cfx'],parStr];
-    system(FEKOmesh)
-    % Run FEKO - cannot run with path, so change the directory
-    curDir = pwd;
-    cd(M.path)
-    FEKOrun = ['runfeko ', [M.name,'.cfx']];
-    system(FEKOrun)
-    cd(curDir)
-    % Generate output
-    for rr = 1:Nr
-        if strncmp(Rtype{rr},'S11',3)
-            % Read the S11 touchstone file - must be exported by the FEKO
-            % file with the correct name - Name_S11.s1p!
-            [Spar,freq] = touchread([M.path,M.name,'_S11.s1p'],1);
-            S11 = reshape(Spar(1,1,:),length(freq),1);
-            Rf{rr}.f = freq;
-        end
-        if strcmp(Rtype{rr},'S11dB')
-            Rf{rr}.r = dB20(S11);
-        elseif strcmp(Rtype{rr},'S11complex')
-            Rf{rr}.r = S11;
-        end
-        Rf{rr}.t = Rtype{rr};
-    end
-    
-elseif strcmp(M.solver,'MATLAB')    % If solver is MATLAB
-    Ni = length(M.params);  % This is interpreted as the number of inputs to the function
-    inType = [];
-    for ii = 1:Ni
-        inType = [inType,M.params{ii}];   % Initialise
-    end
-    switch inType
-        case 'xf'
-            Rfi = M.name(xi,M.freq);
-        otherwise
-            Rfi = M.name(xi);
-    end
-    % Distribute the responses
-    % For MATLAB case the model should the return the specified responses
-    % columnwise...
-    for rr = 1:Nr
-        Rf{rr}.r = Rfi(:,rr);
-        Rf{rr}.t = Rtype{rr};
-        if exist('f','var')
-            Rf{rr}.f = f;
-        end
-    end
+        
+    otherwise
+        error(['M.solver unknown for fine model evaluation'])
 end
+
 end
 
 function Rc = coarseMod(M,xi,xp,f)
@@ -520,72 +534,86 @@ end
 Nr = length(Rtype);
 Rc = cell(1,Nr);
 
-% Check which solver is used to evaluate the model
-if strcmp(M.solver,'FEKO')    % If solver is FEKO
-    % Build parameter string
-    parStr = [];
-    for nn = 1:Nn
-        parStr = [parStr,' -#',M.params{nn},'=',num2str(xi(nn))];
-    end
-    % Also include possible implicit parameters
-    for qq = 1:Nq
-        parStr = [parStr,' -#',M.Iparams{qq},'=',num2str(xp(qq))];
-    end
-
-    % Remesh the structure with the new parameters
-    FEKOmesh = ['cadfeko_batch ',[M.path,M.name,'.cfx'],parStr];
-    system(FEKOmesh)
-    % Run FEKO - cannot run with path, so change the directory
-    curDir = pwd;
-    cd(M.path)
-    FEKOrun = ['runfeko ', [M.name,'.cfx']];
-    system(FEKOrun)
-    cd(curDir)
-    % Generate output
-    for rr = 1:Nr
-        if strncmp(Rtype{rr},'S11',3)
-            % Read the S11 touchstone file - must be exported by the FEKO
-            % file with the correct name - Name_S11.s1p!
-            [Spar,freq] = touchread([M.path,M.name,'_S11.s1p'],1);
-            S11 = reshape(Spar(1,1,:),length(freq),1);
-            Rc{rr}.f = freq;
+% Call the correct solver
+switch M.solver
+    case 'CST'
+        error('CST solver not implimented yet for coarse model evaluations')
+        
+    case 'FEKO'
+        % Build parameter string
+        parStr = [];
+        for nn = 1:Nn
+            parStr = [parStr,' -#',M.params{nn},'=',num2str(xi(nn))];
         end
-        if strcmp(Rtype{rr},'S11dB')
-            Rc{rr}.r = dB20(S11);
-        elseif strcmp(Rtype{rr},'S11complex')
-            Rc{rr}.r = S11;
+        % Also include possible implicit parameters
+        for qq = 1:Nq
+            parStr = [parStr,' -#',M.Iparams{qq},'=',num2str(xp(qq))];
         end
-        Rc{rr}.t = Rtype{rr};
-    end
-elseif strcmp(M.solver,'MATLAB')
-    Ni = length(M.params);  % This is interpreted as the number of inputs to the function
-    inType = [];
-    for ii = 1:Ni
-        inType = [inType,M.params{ii}];   % Initialise
-    end
-    switch inType
-        case 'xxpf'
-            Rci = M.name(xi,xp,f);
-        case 'xf'
-            Rci = M.name(xi,f);
-        case 'xxp'
-            Rci = M.name(xi,xp);
-        otherwise
-            Rci = M.name(xi);
-    end
-    % Distribute the responses
-    % For MATLAB case the model should the return the specified responses
-    % columnwise...
-    for rr = 1:Nr
-        Rc{rr}.r = Rci(:,rr);
-        Rc{rr}.t = Rtype{rr};
-        if exist('f','var')
-            Rc{rr}.f = f;
+        
+        % Remesh the structure with the new parameters
+        FEKOmesh = ['cadfeko_batch ',[M.path,M.name,'.cfx'],parStr];
+        system(FEKOmesh)
+        % Run FEKO - cannot run with path, so change the directory
+        curDir = pwd;
+        cd(M.path)
+        FEKOrun = ['runfeko ', [M.name,'.cfx']];
+        system(FEKOrun)
+        cd(curDir)
+        % Generate output
+        for rr = 1:Nr
+            if strncmp(Rtype{rr},'S11',3)
+                % Read the S11 touchstone file - must be exported by the FEKO
+                % file with the correct name - Name_S11.s1p!
+                [Spar,freq] = touchread([M.path,M.name,'_S11.s1p'],1);
+                S11 = reshape(Spar(1,1,:),length(freq),1);
+                Rc{rr}.f = freq;
+            end
+            if strcmp(Rtype{rr},'S11dB')
+                Rc{rr}.r = dB20(S11);
+            elseif strcmp(Rtype{rr},'S11complex')
+                Rc{rr}.r = S11;
+            end
+            Rc{rr}.t = Rtype{rr};
         end
-    end
+        
+    case 'AWR'
+        error('AWR solver not implimented yet for coarse model evaluations')
+        
+    case 'ADS'
+        error('ADS solver not implimented yet for coarse model evaluations')
+        
+    case 'MATLAB'
+        Ni = length(M.params);  % This is interpreted as the number of inputs to the function
+        inType = [];
+        for ii = 1:Ni
+            inType = [inType,M.params{ii}];   % Initialise
+        end
+        switch inType
+            case 'xxpf'
+                Rci = M.name(xi,xp,f);
+            case 'xf'
+                Rci = M.name(xi,f);
+            case 'xxp'
+                Rci = M.name(xi,xp);
+            otherwise
+                Rci = M.name(xi);
+        end
+        % Distribute the responses
+        % For MATLAB case the model should the return the specified responses
+        % columnwise...
+        for rr = 1:Nr
+            Rc{rr}.r = Rci(:,rr);
+            Rc{rr}.t = Rtype{rr};
+            if exist('f','var')
+                Rc{rr}.f = f;
+            end
+        end
+    otherwise
+        error(['M.solver unknown for coarse model evaluation'])
 end
-
 end
+        
+        
 
 
 
@@ -641,286 +669,6 @@ else
 end
 % if cost == 0, keyboard; end
 
-end
-
-function cost = costFunc(R,GOALS)
-
-% Function to calculate the cost of a given response R as specified by the
-% goals in GOALS
-% R is a cell array of structures containing the response in R.r, the type R.t, and the
-% (optional) domain (typically frequency) in R.f.
-% R can also be a structure if only one type of response is considered.
-% GOALS can contain (typically a subset of OPTopts used in the main function):
-%   goalResType:Cell array of response names to consider for the different goals {1,Ng}
-%               Valid types:
-%               'S11dB'
-%               'S11complex'
-%               'Gen'
-%   goalType:   Cell array of goal types {1,Ng}
-%               Valid types:
-%                   'lt' (Less than)
-%                   'gt' (Greater than)
-%                   'eq' (equal to) - todo
-%                   'minimax'
-%   goalVal:    Cell array of goal values {1,Ng} - same order as goalType
-%   goalWeight: Vector of goal weights [1,Ng] (default equal weights)
-%   goalStart:  Cell array of start of valid goal domain {1,Ng} (optional)
-%   goalStop:   Cell array of stop of valid goal domain {1,Ng} (optional)
-%   errNorm:    Cell array of type of error norms to use for optimization {1,Ng}
-%               Valid types:
-%                   'L1' (L1 norm - default)
-%                   'L2' (L2 norm)
-
-% Make R a cell array if only one structure is passed.
-if length(R) == 1 && ~iscell(R), R = {R}; end
-
-Nr = length(R);
-Ng = length(GOALS.goalType);
-[cSum,wSum] = deal(0);
-
-for gg = 1:Ng
-    goalType = GOALS.goalType{gg};
-    if isfield(GOALS,'goalVal'),G.goalVal = GOALS.goalVal{gg}; end
-    if isfield(GOALS,'goalStart'), G.goalStart = GOALS.goalStart{gg}; end
-    if isfield(GOALS,'goalStop'), G.goalStop = GOALS.goalStop{gg}; end
-    G.errNorm = 'L1';
-    if isfield(GOALS,'errNorm'), G.errNorm = GOALS.errNorm{gg}; end
-    goalWeight = 1;
-    if isfield(GOALS,'goalWeight'), goalWeight = GOALS.goalWeight{gg}; end
-    wSum = wSum + goalWeight;
-    
-    % Special case for complex and dB S11 goals...
-    if strcmp(R{1}.t,'S11complex') && strcmp(GOALS.goalResType{gg},'S11dB')
-        Ri = R{1};
-        Ri.r = dB20(R{1}.r);
-    else
-        Ri = R{1};
-    end
-    tt = 1;
-    while tt < Nr
-        if strcmp(R{tt}.t,GOALS.goalResType{gg})
-            Ri = R{tt};
-            break;
-        end
-        % Special case for complex and dB S11 goals...
-        if strcmp(R{tt}.t,'S11complex') && strcmp(GOALS.goalResType{gg},'S11dB')
-            Ri = R{1};
-            Ri.r = dB20(R{1}.r);
-            break;
-        end
-        tt = tt + 1;
-    end
-    if strcmp(goalType,'lt')
-        c0 = costlt(Ri,G);
-    elseif strcmp(goalType,'gt')
-        c0 = costgt(Ri,G);
-    elseif strcmp(goalType,'minimax')
-        c0 = costminimax(Ri,G);
-    end
-    cSum = cSum + goalWeight*c0;
-end
-cost = cSum/wSum;
-
-end
-
-function c0 = costlt(R,G)
-% Function to evaluate an 'lt' (less than) goal function for the
-% given response R.
-% R is a structure containing the response in R.r and the
-% (optional) domain (typically frequency) in R.f.  If the domain is
-% not specified the (optional) goal limits will be interpreted as indeces in
-% the vector.
-% The structure G contains:
-%   goalVal:    Goal value
-%   goalStart:  Start of valid goal domain (optional)
-%   goalStop:   Stop of valid goal domain (optional)
-%   errNorm:    Type of error norm to use for optimization
-%               Valid types:
-%                   'L1' (L1 norm - default)
-%                   'L2' (L2 norm)
-
-Nm = length(R.r);
-if ~isfield(R,'f')
-    if isfield(G,'goalStart')
-        iStart = G.goalStart;
-    else
-        iStart = 1;
-    end
-    if isfield(G,'goalStop')
-        iStop = G.goalStop;
-    else
-        iStop = Nm;
-    end
-else
-    if isfield(G,'goalStart')
-        iStart = find(R.f >= G.goalStart,1);
-    else
-        iStart = 1;
-    end
-    if isfield(G,'goalStop')
-        iStop = find(R.f <= G.goalStop,1,'last');
-    else
-        iStop = Nm;
-    end
-end
-
-Rvalid = R.r(iStart:iStop);
-y = Rvalid - G.goalVal;
-y(y < 0) = 0;
-c0 = Lnorm(y,G.errNorm);
-end
-
-function c0 = costgt(R,G)
-% Function to evaluate an 'gt' (greater than) goal function for the
-% given response R.
-% R is a structure containing the response in R.r and the
-% (optional) domain (typically frequency) in R.f.  If the domain is
-% not specified the (optional) goal limits will be interpreted as indeces in
-% the vector.
-% The structure G contains:
-%   goalVal:    Goal value
-%   goalStart:  Start of valid goal domain (optional)
-%   goalStop:   Stop of valid goal domain (optional)
-%   errNorm:    Type of error norm to use for optimization
-%               Valid types:
-%                   'L1' (L1 norm - default)
-%                   'L2' (L2 norm)
-
-Nm = length(R.r);
-if ~isfield(R,'f')
-    if isfield(G,'goalStart')
-        iStart = G.goalStart;
-    else
-        iStart = 1;
-    end
-    if isfield(G,'goalStop')
-        iStop = G.goalStop;
-    else
-        iStop = Nm;
-    end
-else
-    if isfield(G,'goalStart')
-        iStart = find(R.f >= G.goalStart,1);
-    else
-        iStart = 1;
-    end
-    if isfield(G,'goalStop')
-        iStop = find(R.f <= G.goalStart,1,'last');
-    else
-        iStop = Nm;
-    end
-end
-
-Rvalid = R.r(iStart:iStop);
-y = Rvalid - G.goalVal;
-y(y > 0) = 0;
-c0 = Lnorm(y,G.errNorm);
-end
-
-
-function c0 = costminimax(R,G)
-% Function to evaluate an 'minimax' goal function for the
-% given response R.
-% R is a structure containing the response in R.r and the
-% (optional) domain (typically frequency) in R.f.  If the domain is
-% not specified the (optional) goal limits will be interpreted as indeces in
-% the vector.
-% The structure G contains:
-%   goalStart:  Start of valid goal domain (optional)
-%   goalStop:   Stop of valid goal domain (optional)
-%   errNorm:    Type of error norm to use for optimization
-%               Valid types:
-%                   'L1' (L1 norm - default)
-%                   'L2' (L2 norm)
-
-Nm = length(R.r);
-if ~isfield(R,'f')
-    if isfield(G,'goalStart')
-        iStart = G.goalStart;
-    else
-        iStart = 1;
-    end
-    if isfield(G,'goalStop')
-        iStop = G.goalStop;
-    else
-        iStop = Nm;
-    end
-else
-    if isfield(G,'goalStart')
-        iStart = find(R.f >= G.goalStart,1);
-    else
-        iStart = 1;
-    end
-    if isfield(G,'goalStop')
-        iStop = find(R.f <= G.goalStop,1,'last');
-    else
-        iStop = Nm;
-    end
-end
-
-Rvalid = R.r(iStart:iStop);
-c0 = max(Rvalid);
-end
-
-
-function c0 = costeq(R,G)
-% Function to evaluate an 'eq' (equal to) goal function for the
-% given response R.
-% R is a structure containing the response in R.r and the
-% (optional) domain (typically frequency) in R.f.  If the domain is
-% not specified the (optional) goal limits will be interpreted as indeces in
-% the vector.
-% The structure G contains:
-%   goalVal:    Goal value - can be scalar or vector of the same length as
-%               R.r
-%   goalStart:  Start of valid goal domain (optional)
-%   goalStop:   Stop of valid goal domain (optional)
-%   errNorm:    Type of error norm to use for optimization
-%               Valid types:
-%                   'L1' (L1 norm - default)
-%                   'L2' (L2 norm)
-
-Nm = length(R.r);
-if ~isfield(R,'f')
-    if isfield(G,'goalStart')
-        iStart = G.goalStart;
-    else
-        iStart = 1;
-    end
-    if isfield(G,'goalStop')
-        iStop = G.goalStop;
-    else
-        iStop = Nm;
-    end
-else
-    if isfield(G,'goalStart')
-        iStart = find(R.f >= G.goalStart,1);
-    else
-        iStart = 1;
-    end
-    if isfield(G,'goalStop')
-        iStop = find(R.f <= G.goalStart,1,'last');
-    else
-        iStop = Nm;
-    end
-end
-
-Rvalid = R.r(iStart:iStop);
-if length(G.goalVal) == length(R.r)
-    y = Rvalid - G.goalVal(iStart:iStop);
-else
-    y = Rvalid - G.goalVal;
-end
-c0 = Lnorm(y,G.errNorm);
-end
-
-
-function Ln = Lnorm(y,L)
-% Calculates the norm of vector y.  L = 'L1' returns the L1 norm and L
-% = 'L2' the L2 norm
-if strcmp(L,'L1'), Lp = 1;
-elseif strcmp(L,'L2'), Lp = 2; end
-Ln = sum(abs(y).^Lp)./length(y);
 end
 
 
